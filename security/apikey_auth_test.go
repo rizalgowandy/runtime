@@ -16,172 +16,209 @@ package security
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/go-openapi/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var tokenAuth = TokenAuthentication(func(token string) (interface{}, error) {
-	if token == "token123" {
-		return "admin", nil
-	}
-	return nil, errors.Unauthenticated("token")
-})
+const (
+	apiKeyParam  = "api_key"
+	apiKeyHeader = "X-API-KEY"
+)
 
-var tokenAuthCtx = TokenAuthenticationCtx(func(ctx context.Context, token string) (context.Context, interface{}, error) {
-	if token == "token123" {
-		return context.WithValue(ctx, extra, extraWisdom), "admin", nil
-	}
-	return context.WithValue(ctx, reason, expReason), nil, errors.Unauthenticated("token")
-})
+func TestApiKeyAuth(t *testing.T) {
+	tokenAuth := TokenAuthentication(func(token string) (interface{}, error) {
+		if token == validToken {
+			return principal, nil
+		}
+		return nil, errors.Unauthenticated("token")
+	})
 
-func TestInvalidApiKeyAuthInitialization(t *testing.T) {
-	assert.Panics(t, func() { APIKeyAuth("api_key", "qery", tokenAuth) })
+	t.Run("with invalid initialization", func(t *testing.T) {
+		assert.Panics(t, func() { APIKeyAuth(apiKeyParam, "qery", tokenAuth) })
+	})
+
+	t.Run("with token in query param", func(t *testing.T) {
+		ta := APIKeyAuth(apiKeyParam, query, tokenAuth)
+
+		t.Run("with valid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, validToken), nil)
+			require.NoError(t, err)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Equal(t, principal, usr)
+			require.NoError(t, err)
+		})
+
+		t.Run("with invalid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, invalidToken), nil)
+			require.NoError(t, err)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Nil(t, usr)
+			require.Error(t, err)
+		})
+
+		t.Run("with missing token", func(t *testing.T) {
+			// put the token in the header, but query param is expected
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, validToken)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.False(t, ok)
+			assert.Nil(t, usr)
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("with token in header", func(t *testing.T) {
+		ta := APIKeyAuth(apiKeyHeader, header, tokenAuth)
+
+		t.Run("with valid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, validToken)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Equal(t, principal, usr)
+			require.NoError(t, err)
+		})
+
+		t.Run("with invalid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, invalidToken)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Nil(t, usr)
+			require.Error(t, err)
+		})
+
+		t.Run("with missing token", func(t *testing.T) {
+			// put the token in the query param, but header is expected
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, validToken), nil)
+			require.NoError(t, err)
+
+			ok, usr, err := ta.Authenticate(req)
+			assert.False(t, ok)
+			assert.Nil(t, usr)
+			require.NoError(t, err)
+		})
+	})
 }
 
-func TestValidApiKeyAuth(t *testing.T) {
-	ta := APIKeyAuth("api_key", "query", tokenAuth)
-	ta2 := APIKeyAuth("X-API-KEY", "header", tokenAuth)
+func TestApiKeyAuthCtx(t *testing.T) {
+	tokenAuthCtx := TokenAuthenticationCtx(func(ctx context.Context, token string) (context.Context, interface{}, error) {
+		if token == validToken {
+			return context.WithValue(ctx, extra, extraWisdom), principal, nil
+		}
+		return context.WithValue(ctx, reason, expReason), nil, errors.Unauthenticated("token")
+	})
+	ctx := context.WithValue(context.Background(), original, wisdom)
 
-	req1, _ := http.NewRequest("GET", "/blah?api_key=token123", nil)
+	t.Run("with invalid initialization", func(t *testing.T) {
+		assert.Panics(t, func() { APIKeyAuthCtx(apiKeyParam, "qery", tokenAuthCtx) })
+	})
 
-	ok, usr, err := ta.Authenticate(req1)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-	assert.NoError(t, err)
+	t.Run("with token in query param", func(t *testing.T) {
+		ta := APIKeyAuthCtx(apiKeyParam, query, tokenAuthCtx)
 
-	req2, _ := http.NewRequest("GET", "/blah", nil)
-	req2.Header.Set("X-API-KEY", "token123")
+		t.Run("with valid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, validToken), nil)
+			require.NoError(t, err)
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Equal(t, principal, usr)
+			require.NoError(t, err)
 
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-	assert.NoError(t, err)
-}
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Equal(t, extraWisdom, req.Context().Value(extra))
+			assert.Nil(t, req.Context().Value(reason))
+		})
 
-func TestInvalidApiKeyAuth(t *testing.T) {
-	ta := APIKeyAuth("api_key", "query", tokenAuth)
-	ta2 := APIKeyAuth("X-API-KEY", "header", tokenAuth)
+		t.Run("with invalid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, invalidToken), nil)
+			require.NoError(t, err)
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Nil(t, usr)
+			require.Error(t, err)
 
-	req1, _ := http.NewRequest("GET", "/blah?api_key=token124", nil)
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Equal(t, expReason, req.Context().Value(reason))
+			assert.Nil(t, req.Context().Value(extra))
+		})
 
-	ok, usr, err := ta.Authenticate(req1)
-	assert.True(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.Error(t, err)
+		t.Run("with missing token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, validToken)
 
-	req2, _ := http.NewRequest("GET", "/blah", nil)
-	req2.Header.Set("X-API-KEY", "token124")
+			ok, usr, err := ta.Authenticate(req)
+			assert.False(t, ok)
+			assert.Nil(t, usr)
+			require.NoError(t, err)
 
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.True(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.Error(t, err)
-}
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Nil(t, req.Context().Value(reason))
+			assert.Nil(t, req.Context().Value(extra))
+		})
+	})
 
-func TestMissingApiKeyAuth(t *testing.T) {
-	ta := APIKeyAuth("api_key", "query", tokenAuth)
-	ta2 := APIKeyAuth("X-API-KEY", "header", tokenAuth)
+	t.Run("with token in header", func(t *testing.T) {
+		ta := APIKeyAuthCtx(apiKeyHeader, header, tokenAuthCtx)
 
-	req1, _ := http.NewRequest("GET", "/blah", nil)
-	req1.Header.Set("X-API-KEY", "token123")
+		t.Run("with valid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, validToken)
 
-	ok, usr, err := ta.Authenticate(req1)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.NoError(t, err)
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Equal(t, principal, usr)
+			require.NoError(t, err)
 
-	req2, _ := http.NewRequest("GET", "/blah?api_key=token123", nil)
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Equal(t, extraWisdom, req.Context().Value(extra))
+			assert.Nil(t, req.Context().Value(reason))
+		})
 
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.NoError(t, err)
-}
+		t.Run("with invalid token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+			require.NoError(t, err)
+			req.Header.Set(apiKeyHeader, invalidToken)
 
-func TestInvalidApiKeyAuthInitializationCtx(t *testing.T) {
-	assert.Panics(t, func() { APIKeyAuthCtx("api_key", "qery", tokenAuthCtx) })
-}
+			ok, usr, err := ta.Authenticate(req)
+			assert.True(t, ok)
+			assert.Nil(t, usr)
+			require.Error(t, err)
 
-func TestValidApiKeyAuthCtx(t *testing.T) {
-	ta := APIKeyAuthCtx("api_key", "query", tokenAuthCtx)
-	ta2 := APIKeyAuthCtx("X-API-KEY", "header", tokenAuthCtx)
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Equal(t, expReason, req.Context().Value(reason))
+			assert.Nil(t, req.Context().Value(extra))
+		})
 
-	req1, _ := http.NewRequest("GET", "/blah?api_key=token123", nil)
-	req1 = req1.WithContext(context.WithValue(req1.Context(), original, wisdom))
-	ok, usr, err := ta.Authenticate(req1)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-	assert.NoError(t, err)
-	assert.Equal(t, wisdom, req1.Context().Value(original))
-	assert.Equal(t, extraWisdom, req1.Context().Value(extra))
-	assert.Nil(t, req1.Context().Value(reason))
+		t.Run("with missing token", func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s?%s=%s", authPath, apiKeyParam, validToken), nil)
+			require.NoError(t, err)
 
-	req2, _ := http.NewRequest("GET", "/blah", nil)
-	req2 = req2.WithContext(context.WithValue(req2.Context(), original, wisdom))
-	req2.Header.Set("X-API-KEY", "token123")
+			ok, usr, err := ta.Authenticate(req)
+			assert.False(t, ok)
+			assert.Nil(t, usr)
+			require.NoError(t, err)
 
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-	assert.NoError(t, err)
-	assert.Equal(t, wisdom, req2.Context().Value(original))
-	assert.Equal(t, extraWisdom, req2.Context().Value(extra))
-	assert.Nil(t, req2.Context().Value(reason))
-}
-
-func TestInvalidApiKeyAuthCtx(t *testing.T) {
-	ta := APIKeyAuthCtx("api_key", "query", tokenAuthCtx)
-	ta2 := APIKeyAuthCtx("X-API-KEY", "header", tokenAuthCtx)
-
-	req1, _ := http.NewRequest("GET", "/blah?api_key=token124", nil)
-	req1 = req1.WithContext(context.WithValue(req1.Context(), original, wisdom))
-	ok, usr, err := ta.Authenticate(req1)
-	assert.True(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.Error(t, err)
-	assert.Equal(t, wisdom, req1.Context().Value(original))
-	assert.Equal(t, expReason, req1.Context().Value(reason))
-	assert.Nil(t, req1.Context().Value(extra))
-
-	req2, _ := http.NewRequest("GET", "/blah", nil)
-	req2 = req2.WithContext(context.WithValue(req2.Context(), original, wisdom))
-	req2.Header.Set("X-API-KEY", "token124")
-
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.True(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.Error(t, err)
-	assert.Equal(t, wisdom, req2.Context().Value(original))
-	assert.Equal(t, expReason, req2.Context().Value(reason))
-	assert.Nil(t, req2.Context().Value(extra))
-}
-
-func TestMissingApiKeyAuthCtx(t *testing.T) {
-	ta := APIKeyAuthCtx("api_key", "query", tokenAuthCtx)
-	ta2 := APIKeyAuthCtx("X-API-KEY", "header", tokenAuthCtx)
-
-	req1, _ := http.NewRequest("GET", "/blah", nil)
-	req1 = req1.WithContext(context.WithValue(req1.Context(), original, wisdom))
-	req1.Header.Set("X-API-KEY", "token123")
-
-	ok, usr, err := ta.Authenticate(req1)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.NoError(t, err)
-	assert.Equal(t, wisdom, req1.Context().Value(original))
-	assert.Nil(t, req1.Context().Value(reason))
-	assert.Nil(t, req1.Context().Value(extra))
-
-	req2, _ := http.NewRequest("GET", "/blah?api_key=token123", nil)
-	req2 = req2.WithContext(context.WithValue(req2.Context(), original, wisdom))
-	ok, usr, err = ta2.Authenticate(req2)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
-	assert.NoError(t, err)
-	assert.Equal(t, wisdom, req2.Context().Value(original))
-	assert.Nil(t, req2.Context().Value(reason))
-	assert.Nil(t, req2.Context().Value(extra))
+			assert.Equal(t, wisdom, req.Context().Value(original))
+			assert.Nil(t, req.Context().Value(reason))
+			assert.Nil(t, req.Context().Value(extra))
+		})
+	})
 }

@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,16 +38,16 @@ func (c *countingReadCloser) Close() error {
 
 func TestDrainingReadCloser(t *testing.T) {
 	rdr := newCountingReader(bytes.NewBufferString("There are many things to do"), false)
-	prevDisc := ioutil.Discard
+	prevDisc := io.Discard
 	disc := bytes.NewBuffer(nil)
-	ioutil.Discard = disc
-	defer func() { ioutil.Discard = prevDisc }()
+	io.Discard = disc
+	defer func() { io.Discard = prevDisc }()
 
 	buf := make([]byte, 5)
 	ts := &drainingReadCloser{rdr: rdr}
 	_, err := ts.Read(buf)
 	require.NoError(t, err)
-	ts.Close()
+	require.NoError(t, ts.Close())
 	assert.Equal(t, "There", string(buf))
 	assert.Equal(t, " are many things to do", disc.String())
 	assert.Equal(t, 3, rdr.readCalled)
@@ -57,20 +56,20 @@ func TestDrainingReadCloser(t *testing.T) {
 
 func TestDrainingReadCloser_SeenEOF(t *testing.T) {
 	rdr := newCountingReader(bytes.NewBufferString("There are many things to do"), true)
-	prevDisc := ioutil.Discard
+	prevDisc := io.Discard
 	disc := bytes.NewBuffer(nil)
-	ioutil.Discard = disc
-	defer func() { ioutil.Discard = prevDisc }()
+	io.Discard = disc
+	defer func() { io.Discard = prevDisc }()
 
 	buf := make([]byte, 5)
 	ts := &drainingReadCloser{rdr: rdr}
 	_, err := ts.Read(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = ts.Read(nil)
-	assert.Equal(t, io.EOF, err)
-	ts.Close()
-	assert.Equal(t, string(buf), "There")
-	assert.Equal(t, disc.String(), "")
+	require.ErrorIs(t, err, io.EOF)
+	require.NoError(t, ts.Close())
+	assert.Equal(t, "There", string(buf))
+	assert.Empty(t, disc.String())
 	assert.Equal(t, 2, rdr.readCalled)
 	assert.Equal(t, 1, rdr.closeCalled)
 }

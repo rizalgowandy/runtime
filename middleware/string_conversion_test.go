@@ -25,6 +25,7 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var evaluatesAsTrue = []string{"true", "1", "yes", "ok", "y", "on", "selected", "checked", "t", "enabled"}
@@ -63,7 +64,7 @@ type SomeOperationParams struct {
 	Categories  unmarshallerSlice
 }
 
-func FloatParamTest(t *testing.T, fName, pName, format string, val reflect.Value, defVal, expectedDef interface{}, actual func() interface{}) {
+func FloatParamTest(t *testing.T, _, pName, _ string, val reflect.Value, defVal, expectedDef interface{}, actual func() interface{}) {
 	fld := val.FieldByName(pName)
 	binder := &untypedParamBinder{
 		parameter: spec.QueryParam(pName).Typed("number", "double").WithDefault(defVal),
@@ -71,15 +72,15 @@ func FloatParamTest(t *testing.T, fName, pName, format string, val reflect.Value
 	}
 
 	err := binder.setFieldValue(fld, defVal, "5", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, 5, actual())
 
 	err = binder.setFieldValue(fld, defVal, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, expectedDef, actual())
 
 	err = binder.setFieldValue(fld, defVal, "yada", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func IntParamTest(t *testing.T, pName string, val reflect.Value, defVal, expectedDef interface{}, actual func() interface{}) {
@@ -90,15 +91,15 @@ func IntParamTest(t *testing.T, pName string, val reflect.Value, defVal, expecte
 		Name:      pName,
 	}
 	err := binder.setFieldValue(fld, defVal, "5", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, 5, actual())
 
 	err = binder.setFieldValue(fld, defVal, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, expectedDef, actual())
 
 	err = binder.setFieldValue(fld, defVal, "yada", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestParamBinding(t *testing.T) {
@@ -108,16 +109,16 @@ func TestParamBinding(t *testing.T) {
 	fld := val.FieldByName(pName)
 
 	binder := &untypedParamBinder{
-		parameter: spec.QueryParam(pName).Typed("string", "").WithDefault("some-name"),
+		parameter: spec.QueryParam(pName).Typed(typeString, "").WithDefault("some-name"),
 		Name:      pName,
 	}
 
 	err := binder.setFieldValue(fld, "some-name", "the name value", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "the name value", actual.Name)
 
 	err = binder.setFieldValue(fld, "some-name", "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "some-name", actual.Name)
 
 	IntParamTest(t, "ID", val, 1, 1, func() interface{} { return actual.ID })
@@ -155,94 +156,94 @@ func TestParamBinding(t *testing.T) {
 
 	for _, tv := range evaluatesAsTrue {
 		err = binder.setFieldValue(confirmedField, true, tv, true)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.True(t, actual.Confirmed)
 	}
 
 	err = binder.setFieldValue(confirmedField, true, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, actual.Confirmed)
 
 	err = binder.setFieldValue(confirmedField, true, "0", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, actual.Confirmed)
 
 	pName = "Timestamp"
 	timeField := val.FieldByName(pName)
 	dt := strfmt.DateTime(time.Date(2014, 3, 19, 2, 9, 0, 0, time.UTC))
 	binder = &untypedParamBinder{
-		parameter: spec.QueryParam(pName).Typed("string", "date-time").WithDefault(dt),
+		parameter: spec.QueryParam(pName).Typed(typeString, "date-time").WithDefault(dt),
 		Name:      pName,
 	}
 	exp := strfmt.DateTime(time.Date(2014, 5, 14, 2, 9, 0, 0, time.UTC))
 
 	err = binder.setFieldValue(timeField, dt, exp.String(), true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, exp, actual.Timestamp)
 
 	err = binder.setFieldValue(timeField, dt, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, dt, actual.Timestamp)
 
 	err = binder.setFieldValue(timeField, dt, "yada", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	ddt := strfmt.Date(time.Date(2014, 3, 19, 0, 0, 0, 0, time.UTC))
 	pName = "Birthdate"
 	dateField := val.FieldByName(pName)
 	binder = &untypedParamBinder{
-		parameter: spec.QueryParam(pName).Typed("string", "date").WithDefault(ddt),
+		parameter: spec.QueryParam(pName).Typed(typeString, "date").WithDefault(ddt),
 		Name:      pName,
 	}
 	expd := strfmt.Date(time.Date(2014, 5, 14, 0, 0, 0, 0, time.UTC))
 
 	err = binder.setFieldValue(dateField, ddt, expd.String(), true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, expd, actual.Birthdate)
 
 	err = binder.setFieldValue(dateField, ddt, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, ddt, actual.Birthdate)
 
 	err = binder.setFieldValue(dateField, ddt, "yada", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	dt = strfmt.DateTime(time.Date(2014, 3, 19, 2, 9, 0, 0, time.UTC))
 	fdt := &dt
 	pName = "LastFailure"
 	ftimeField := val.FieldByName(pName)
 	binder = &untypedParamBinder{
-		parameter: spec.QueryParam(pName).Typed("string", "date").WithDefault(fdt),
+		parameter: spec.QueryParam(pName).Typed(typeString, "date").WithDefault(fdt),
 		Name:      pName,
 	}
 	exp = strfmt.DateTime(time.Date(2014, 5, 14, 2, 9, 0, 0, time.UTC))
 	fexp := &exp
 
 	err = binder.setFieldValue(ftimeField, fdt, fexp.String(), true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, fexp, actual.LastFailure)
 
 	err = binder.setFieldValue(ftimeField, fdt, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, fdt, actual.LastFailure)
 
 	err = binder.setFieldValue(ftimeField, fdt, "", true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, fdt, actual.LastFailure)
 
 	actual.LastFailure = nil
 	err = binder.setFieldValue(ftimeField, fdt, "yada", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, actual.LastFailure)
 
 	pName = "Unsupported"
 	unsupportedField := val.FieldByName(pName)
 	binder = &untypedParamBinder{
-		parameter: spec.QueryParam(pName).Typed("string", ""),
+		parameter: spec.QueryParam(pName).Typed(typeString, ""),
 		Name:      pName,
 	}
 	err = binder.setFieldValue(unsupportedField, nil, "", true)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestSliceConversion(t *testing.T) {
@@ -252,9 +253,9 @@ func TestSliceConversion(t *testing.T) {
 	// prefsField := val.FieldByName("Prefs")
 	// cData := "yada,2,3"
 	// _, _, err := readFormattedSliceFieldValue("Prefs", prefsField, cData, "csv", nil)
-	// assert.Error(t, err)
+	// require.Error(t, err)
 
-	sliced := []string{"some", "string", "values"}
+	sliced := []string{"some", typeString, "values"}
 	seps := map[string]string{"ssv": " ", "tsv": "\t", "pipes": "|", "csv": ",", "": ","}
 
 	tagsField := val.FieldByName("Tags")
@@ -267,14 +268,14 @@ func TestSliceConversion(t *testing.T) {
 		actual.Tags = nil
 		cData := strings.Join(sliced, sep)
 		tags, _, err := binder.readFormattedSliceFieldValue(cData, tagsField)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, sliced, tags)
 		cData = strings.Join(sliced, " "+sep+" ")
 		tags, _, err = binder.readFormattedSliceFieldValue(cData, tagsField)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, sliced, tags)
 		tags, _, err = binder.readFormattedSliceFieldValue("", tagsField)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Empty(t, tags)
 	}
 
@@ -288,12 +289,12 @@ func TestSliceConversion(t *testing.T) {
 	}
 	cData := strings.Join(sliced, ",")
 	categories, custom, err := binder.readFormattedSliceFieldValue(cData, categoriesField)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, sliced, actual.Categories)
 	assert.True(t, custom)
 	assert.Empty(t, categories)
 	categories, custom, err = binder.readFormattedSliceFieldValue("", categoriesField)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.True(t, custom)
 	assert.Empty(t, categories)
 }

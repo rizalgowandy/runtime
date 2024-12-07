@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"io/ioutil"
 	"testing"
 
 	"github.com/go-openapi/strfmt"
@@ -33,7 +32,7 @@ func (r tres) GetHeaders(_ string) []string {
 	return []string{"the headers", "the headers2"}
 }
 func (r tres) Body() io.ReadCloser {
-	return ioutil.NopCloser(bytes.NewBufferString("the content"))
+	return io.NopCloser(bytes.NewBufferString("the content"))
 }
 
 type mockRuntime struct {
@@ -43,7 +42,7 @@ type mockRuntime struct {
 func (m *mockRuntime) Submit(operation *runtime.ClientOperation) (interface{}, error) {
 	_ = operation.Params.WriteToRequest(&m.req, nil)
 	_, _ = operation.Reader.ReadResponse(&tres{}, nil)
-	return nil, nil
+	return map[string]interface{}{}, nil
 }
 
 func testOperation(ctx context.Context) *runtime.ClientOperation {
@@ -53,11 +52,11 @@ func testOperation(ctx context.Context) *runtime.ClientOperation {
 		PathPattern:        "/kubernetes-clusters/{cluster_id}",
 		ProducesMediaTypes: []string{"application/json"},
 		ConsumesMediaTypes: []string{"application/json"},
-		Schemes:            []string{"https"},
+		Schemes:            []string{schemeHTTPS},
 		Reader: runtime.ClientResponseReaderFunc(func(runtime.ClientResponse, runtime.Consumer) (interface{}, error) {
 			return nil, nil
 		}),
-		Params: runtime.ClientRequestWriterFunc(func(req runtime.ClientRequest, reg strfmt.Registry) error {
+		Params: runtime.ClientRequestWriterFunc(func(_ runtime.ClientRequest, _ strfmt.Registry) error {
 			return nil
 		}),
 		AuthInfo: PassThroughAuth,

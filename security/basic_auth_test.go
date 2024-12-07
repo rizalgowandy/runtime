@@ -21,65 +21,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-var basicAuthHandler = UserPassAuthentication(func(user, pass string) (interface{}, error) {
-	if user == "admin" && pass == "123456" {
-		return "admin", nil
-	}
-	return "", errors.Unauthenticated("basic")
-})
-
-func TestValidBasicAuth(t *testing.T) {
-	ba := BasicAuth(basicAuthHandler)
-
-	req, _ := http.NewRequest("GET", "/blah", nil)
-	req.SetBasicAuth("admin", "123456")
-	ok, usr, err := ba.Authenticate(req)
-
-	assert.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-}
-
-func TestInvalidBasicAuth(t *testing.T) {
-	ba := BasicAuth(basicAuthHandler)
-
-	req, _ := http.NewRequest("GET", "/blah", nil)
-	req.SetBasicAuth("admin", "admin")
-	ok, usr, err := ba.Authenticate(req)
-
-	assert.Error(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, "", usr)
-
-	assert.NotEmpty(t, FailedBasicAuth(req))
-	assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
-}
-
-func TestMissingbasicAuth(t *testing.T) {
-	ba := BasicAuth(basicAuthHandler)
-
-	req, _ := http.NewRequest("GET", "/blah", nil)
-
-	ok, usr, err := ba.Authenticate(req)
-	assert.NoError(t, err)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
-
-	assert.NotEmpty(t, FailedBasicAuth(req))
-	assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
-}
-
-func TestNoRequestBasicAuth(t *testing.T) {
-	ba := BasicAuth(basicAuthHandler)
-
-	ok, usr, err := ba.Authenticate("token")
-
-	assert.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, usr)
-}
 
 type secTestKey uint8
 
@@ -90,71 +33,181 @@ const (
 )
 
 const (
-	wisdom      = "The man who is swimming against the stream knows the strength of it."
-	extraWisdom = "Our greatest glory is not in never falling, but in rising every time we fall."
-	expReason   = "I like the dreams of the future better than the history of the past."
+	wisdom       = "The man who is swimming against the stream knows the strength of it."
+	extraWisdom  = "Our greatest glory is not in never falling, but in rising every time we fall."
+	expReason    = "I like the dreams of the future better than the history of the past."
+	testPassword = "123456"
 )
 
-var basicAuthHandlerCtx = UserPassAuthenticationCtx(func(ctx context.Context, user, pass string) (context.Context, interface{}, error) {
-	if user == "admin" && pass == "123456" {
-		return context.WithValue(ctx, extra, extraWisdom), "admin", nil
-	}
-	return context.WithValue(ctx, reason, expReason), "", errors.Unauthenticated("basic")
-})
+func TestBasicAuth(t *testing.T) {
+	basicAuthHandler := UserPassAuthentication(func(user, pass string) (interface{}, error) {
+		if user == principal && pass == testPassword {
+			return principal, nil
+		}
+		return "", errors.Unauthenticated("basic")
+	})
+	ba := BasicAuth(basicAuthHandler)
 
-func TestValidBasicAuthCtx(t *testing.T) {
-	ba := BasicAuthCtx(basicAuthHandlerCtx)
+	t.Run("with valid basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, testPassword)
 
-	req, _ := http.NewRequest("GET", "/blah", nil)
-	req = req.WithContext(context.WithValue(req.Context(), original, wisdom))
-	req.SetBasicAuth("admin", "123456")
-	ok, usr, err := ba.Authenticate(req)
+		ok, usr, err := ba.Authenticate(req)
+		require.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, principal, usr)
+	})
 
-	assert.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, "admin", usr)
-	assert.Equal(t, wisdom, req.Context().Value(original))
-	assert.Equal(t, extraWisdom, req.Context().Value(extra))
-	assert.Nil(t, req.Context().Value(reason))
+	t.Run("with invalid basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
+
+		ok, usr, err := ba.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
+
+		assert.NotEmpty(t, FailedBasicAuth(req))
+		assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
+	})
+
+	t.Run("with missing basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+
+		ok, usr, err := ba.Authenticate(req)
+		require.NoError(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, usr)
+
+		assert.NotEmpty(t, FailedBasicAuth(req))
+		assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
+	})
+
+	t.Run("basic auth without request", func(*testing.T) {
+		ok, usr, err := ba.Authenticate("token")
+		require.NoError(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, usr)
+	})
+
+	t.Run("with realm, invalid basic auth", func(t *testing.T) {
+		br := BasicAuthRealm("realm", basicAuthHandler)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
+
+		ok, usr, err := br.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
+		assert.Equal(t, "realm", FailedBasicAuth(req))
+	})
+
+	t.Run("with empty realm, invalid basic auth", func(t *testing.T) {
+		br := BasicAuthRealm("", basicAuthHandler)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
+
+		ok, usr, err := br.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
+		assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
+	})
 }
 
-func TestInvalidBasicAuthCtx(t *testing.T) {
+func TestBasicAuthCtx(t *testing.T) {
+	basicAuthHandlerCtx := UserPassAuthenticationCtx(func(ctx context.Context, user, pass string) (context.Context, interface{}, error) {
+		if user == principal && pass == testPassword {
+			return context.WithValue(ctx, extra, extraWisdom), principal, nil
+		}
+		return context.WithValue(ctx, reason, expReason), "", errors.Unauthenticated("basic")
+	})
 	ba := BasicAuthCtx(basicAuthHandlerCtx)
+	ctx := context.WithValue(context.Background(), original, wisdom)
 
-	req, _ := http.NewRequest("GET", "/blah", nil)
-	req = req.WithContext(context.WithValue(req.Context(), original, wisdom))
-	req.SetBasicAuth("admin", "admin")
-	ok, usr, err := ba.Authenticate(req)
+	t.Run("with valid basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+		require.NoError(t, err)
 
-	assert.Error(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, "", usr)
-	assert.Equal(t, wisdom, req.Context().Value(original))
-	assert.Nil(t, req.Context().Value(extra))
-	assert.Equal(t, expReason, req.Context().Value(reason))
-}
+		req.SetBasicAuth(principal, testPassword)
+		ok, usr, err := ba.Authenticate(req)
+		require.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, principal, usr)
 
-func TestMissingbasicAuthCtx(t *testing.T) {
-	ba := BasicAuthCtx(basicAuthHandlerCtx)
+		assert.Equal(t, wisdom, req.Context().Value(original))
+		assert.Equal(t, extraWisdom, req.Context().Value(extra))
+		assert.Nil(t, req.Context().Value(reason))
+	})
 
-	req, _ := http.NewRequest("GET", "/blah", nil)
-	req = req.WithContext(context.WithValue(req.Context(), original, wisdom))
-	ok, usr, err := ba.Authenticate(req)
-	assert.NoError(t, err)
-	assert.False(t, ok)
-	assert.Equal(t, nil, usr)
+	t.Run("with invalid basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
 
-	assert.Equal(t, wisdom, req.Context().Value(original))
-	assert.Nil(t, req.Context().Value(extra))
-	assert.Nil(t, req.Context().Value(reason))
-}
+		ok, usr, err := ba.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
 
-func TestNoRequestBasicAuthCtx(t *testing.T) {
-	ba := BasicAuthCtx(basicAuthHandlerCtx)
+		assert.Equal(t, wisdom, req.Context().Value(original))
+		assert.Nil(t, req.Context().Value(extra))
+		assert.Equal(t, expReason, req.Context().Value(reason))
+	})
 
-	ok, usr, err := ba.Authenticate("token")
+	t.Run("with missing basic auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPath, nil)
+		require.NoError(t, err)
 
-	assert.NoError(t, err)
-	assert.False(t, ok)
-	assert.Nil(t, usr)
+		ok, usr, err := ba.Authenticate(req)
+		require.NoError(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, usr)
+
+		assert.Equal(t, wisdom, req.Context().Value(original))
+		assert.Nil(t, req.Context().Value(extra))
+		assert.Nil(t, req.Context().Value(reason))
+	})
+
+	t.Run("basic auth without request", func(*testing.T) {
+		ok, usr, err := ba.Authenticate("token")
+		require.NoError(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, usr)
+	})
+
+	t.Run("with realm, invalid basic auth", func(t *testing.T) {
+		br := BasicAuthRealmCtx("realm", basicAuthHandlerCtx)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
+
+		ok, usr, err := br.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
+		assert.Equal(t, "realm", FailedBasicAuth(req))
+	})
+
+	t.Run("with empty realm, invalid basic auth", func(t *testing.T) {
+		br := BasicAuthRealmCtx("", basicAuthHandlerCtx)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, authPath, nil)
+		require.NoError(t, err)
+		req.SetBasicAuth(principal, principal)
+
+		ok, usr, err := br.Authenticate(req)
+		require.Error(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "", usr)
+		assert.Equal(t, DefaultRealmName, FailedBasicAuth(req))
+	})
 }

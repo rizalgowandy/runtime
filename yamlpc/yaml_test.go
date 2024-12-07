@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var consProdYAML = "name: Somebody\nid: 1\n"
@@ -31,8 +32,8 @@ func TestYAMLConsumer(t *testing.T) {
 		Name string
 		ID   int
 	}
-	err := cons.Consume(bytes.NewBuffer([]byte(consProdYAML)), &data)
-	assert.NoError(t, err)
+	err := cons.Consume(bytes.NewBufferString(consProdYAML), &data)
+	require.NoError(t, err)
 	assert.Equal(t, "Somebody", data.Name)
 	assert.Equal(t, 1, data.ID)
 }
@@ -46,27 +47,61 @@ func TestYAMLProducer(t *testing.T) {
 
 	rw := httptest.NewRecorder()
 	err := prod.Produce(rw, data)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, consProdYAML, rw.Body.String())
 }
 
 type failReaderWriter struct {
 }
 
-func (f *failReaderWriter) Read(p []byte) (n int, err error) {
+func (f *failReaderWriter) Read(_ []byte) (n int, err error) {
 	return 0, errors.New("expected")
 }
 
-func (f *failReaderWriter) Write(p []byte) (n int, err error) {
+func (f *failReaderWriter) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("expected")
 }
 
 func TestFailYAMLWriter(t *testing.T) {
 	prod := YAMLProducer()
-	assert.Error(t, prod.Produce(&failReaderWriter{}, nil))
+	require.Error(t, prod.Produce(&failReaderWriter{}, nil))
 }
 
 func TestFailYAMLReader(t *testing.T) {
 	cons := YAMLConsumer()
-	assert.Error(t, cons.Consume(&failReaderWriter{}, nil))
+	require.Error(t, cons.Consume(&failReaderWriter{}, nil))
+}
+
+func TestYAMLConsumerObject(t *testing.T) {
+	const yamlDoc = `
+---
+name: fred
+id: 123
+attributes:
+  height: 12.3
+  weight: 45
+  list:
+    - a
+    - b
+`
+	cons := YAMLConsumer()
+	var data struct {
+		Name       string
+		ID         int
+		Attributes struct {
+			Height float64
+			Weight uint64
+			List   []string
+		}
+	}
+	require.NoError(t,
+		cons.Consume(bytes.NewBufferString(yamlDoc), &data),
+	)
+
+	assert.Equal(t, "fred", data.Name)
+	assert.Equal(t, 123, data.ID)
+	assert.InDelta(t, 12.3, data.Attributes.Height, 1e-9)
+	assert.Equal(t, uint64(45), data.Attributes.Weight)
+	assert.Len(t, data.Attributes.List, 2)
+	assert.Equal(t, "a", data.Attributes.List[0])
 }

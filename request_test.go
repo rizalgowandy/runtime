@@ -17,8 +17,8 @@ package runtime
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,7 +31,7 @@ import (
 
 type eofReader struct{}
 
-func (e *eofReader) Read(d []byte) (int, error) {
+func (e *eofReader) Read(_ []byte) (int, error) {
 	return 0, io.EOF
 }
 
@@ -89,10 +89,9 @@ func TestPeekingReader(t *testing.T) {
 	// just passes to original reader when nothing called
 	exp1 := []byte("original")
 	pr1 := newPeekingReader(closeReader(bytes.NewReader(exp1)))
-	b1, err := ioutil.ReadAll(pr1)
-	if assert.NoError(t, err) {
-		assert.Equal(t, exp1, b1)
-	}
+	b1, err := io.ReadAll(pr1)
+	require.NoError(t, err)
+	assert.Equal(t, exp1, b1)
 
 	// uses actual when there was some buffering
 	exp2 := []byte("actual")
@@ -100,10 +99,9 @@ func TestPeekingReader(t *testing.T) {
 	peeked, err := pr2.underlying.Peek(1)
 	require.NoError(t, err)
 	require.Equal(t, "a", string(peeked))
-	b2, err := ioutil.ReadAll(pr2)
-	if assert.NoError(t, err) {
-		assert.Equal(t, string(exp2), string(b2))
-	}
+	b2, err := io.ReadAll(pr2)
+	require.NoError(t, err)
+	assert.Equal(t, string(exp2), string(b2))
 
 	// passes close call through to original reader
 	cr := closeReader(closeReader(bytes.NewReader(exp2)))
@@ -132,29 +130,63 @@ func TestPeekingReader(t *testing.T) {
 	require.Equal(t, 1, cbr.peeks)
 	require.Equal(t, 0, cbr.reads)
 
-	b, err := ioutil.ReadAll(pr)
+	b, err := io.ReadAll(pr)
 	require.NoError(t, err)
 	require.Equal(t, "hello", string(b))
 	require.Equal(t, 2, cbr.buffereds)
 	require.Equal(t, 1, cbr.peeks)
 	require.Equal(t, 2, cbr.reads)
 	require.Equal(t, 0, cbr.br.Buffered())
+
+	t.Run("closing a closed peekingReader", func(t *testing.T) {
+		const content = "content"
+		r := newPeekingReader(io.NopCloser(strings.NewReader(content)))
+		require.NoError(t, r.Close())
+
+		require.NotPanics(t, func() {
+			err := r.Close()
+			require.Error(t, err)
+		})
+	})
+
+	t.Run("reading from a closed peekingReader", func(t *testing.T) {
+		const content = "content"
+		r := newPeekingReader(io.NopCloser(strings.NewReader(content)))
+		require.NoError(t, r.Close())
+
+		require.NotPanics(t, func() {
+			_, err := io.ReadAll(r)
+			require.Error(t, err)
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		})
+	})
+
+	t.Run("reading from a nil peekingReader", func(t *testing.T) {
+		var r *peekingReader
+		require.NotPanics(t, func() {
+			buf := make([]byte, 10)
+			_, err := r.Read(buf)
+			require.Error(t, err)
+			require.ErrorIs(t, err, io.EOF)
+		})
+	})
 }
 
 func TestJSONRequest(t *testing.T) {
-	req, err := JSONRequest("GET", "/swagger.json", nil)
-	assert.NoError(t, err)
-	assert.Equal(t, "GET", req.Method)
+	req, err := JSONRequest(http.MethodGet, "/swagger.json", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodGet, req.Method)
 	assert.Equal(t, JSONMime, req.Header.Get(HeaderContentType))
 	assert.Equal(t, JSONMime, req.Header.Get(HeaderAccept))
 
-	req, err = JSONRequest("GET", "%2", nil)
-	assert.Error(t, err)
+	req, err = JSONRequest(http.MethodGet, "%2", nil)
+	require.Error(t, err)
 	assert.Nil(t, req)
 }
 
 func TestHasBody(t *testing.T) {
-	req, _ := http.NewRequest("GET", "", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "", nil)
+	require.NoError(t, err)
 	assert.False(t, HasBody(req))
 
 	req.ContentLength = 123
